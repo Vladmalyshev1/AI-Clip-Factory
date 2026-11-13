@@ -1,0 +1,25 @@
+* text=auto
+
+# Shell / scripting on Windows: keep LF for Python and LF for generated text artifacts
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.ass text eol=lf
+*.srt text eol=lf
+*.ps1 text eol=crlf
+
+# Binary media must never be converted
+*.mp4 binary
+*.mkv binary
+*.wav binary
+*.flac binary
+*.mp3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.onnx binary
+*.bin binary

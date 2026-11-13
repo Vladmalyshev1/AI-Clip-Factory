@@ -1,0 +1,52 @@
+[project]
+name = "ai-clip-factory"
+version = "0.1.0"
+description = "Local pipeline that turns authorized Twitch VODs into vertical shorts"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "unit: pure functions, no I/O",
+    "api: FastAPI endpoint tests",
+    "media: tests that require a real ffmpeg/ffprobe",
+    "ai: pipeline tests with a fake transcriber",
+    "slow: opt-in tests (real model, long media)",
+    "gpu: requires a working CUDA/NVENC device",
+    "windows_only: Windows-specific behaviour",
+]
+filterwarnings = ["error::DeprecationWarning:app.*"]
+timeout = 120
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["faster_whisper.*", "ctranslate2.*", "av.*", "soundfile.*", "pysubs2.*"]
+ignore_missing_imports = true

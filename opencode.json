@@ -1,0 +1,47 @@
+
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "factory-lead",
+  "permissions": [
+    {
+      "action": "read",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "subagent",
+      "resource": "*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "Remove-Item*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git reset*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git clean*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git push*",
+      "effect": "ask"
+    }
+  ]
+}

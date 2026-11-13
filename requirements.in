@@ -1,0 +1,20 @@
+# Top-level runtime dependencies. Exact versions are frozen in requirements.lock.txt
+# after a verified install; install with: tools\setup.ps1
+
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy
+alembic
+
+faster-whisper
+onnxruntime
+av
+numpy
+soundfile
+pysubs2
+
+httpx
+tenacity
+psutil

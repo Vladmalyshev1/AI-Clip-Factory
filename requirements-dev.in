@@ -1,0 +1,10 @@
+# Development-only dependencies.
+-r requirements.in
+
+pytest
+pytest-cov
+pytest-timeout
+respx
+hypothesis
+ruff
+mypy
