@@ -60,7 +60,10 @@ Write-Step "Installing dependencies (binary wheels only)"
 if ($LASTEXITCODE -ne 0) { throw "dependency installation failed." }
 
 Write-Step "Freezing verified versions"
-& $venvPython -m pip freeze | Set-Content -Path requirements.lock.txt -Encoding utf8
+# ASCII keeps the lock file free of a UTF-16 BOM that PowerShell 5.1 would add
+# with -Encoding utf8; a BOM makes git treat the file as binary and can break
+# 'pip install -r' on other machines.
+& $venvPython -m pip freeze | Set-Content -Path requirements.lock.txt -Encoding ascii
 Write-Host "requirements.lock.txt written."
 
 # --- 4. FFmpeg --------------------------------------------------------------
