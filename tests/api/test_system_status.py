@@ -8,7 +8,7 @@ from collections.abc import Iterator
 import pytest
 from app.core.config import Settings
 from app.main import create_app
-from app.services.system_service import resolve_ffmpeg_path
+from app.media.binaries import find_ffmpeg
 from fastapi.testclient import TestClient
 
 
@@ -22,7 +22,7 @@ def test_system_status_ready_with_real_ffmpeg(client: TestClient, settings: Sett
     assert body["ffmpeg"]["found"] is True
     assert body["ffmpeg"]["libass"] is True
     assert body["ffprobe"]["found"] is True
-    assert body["ffmpeg"]["path"] == str(resolve_ffmpeg_path(settings))
+    assert body["ffmpeg"]["path"] == str(find_ffmpeg(settings))
     assert body["ffmpeg"]["version"]
 
     assert set(body["worker"]) == {"alive", "last_heartbeat_ms"}

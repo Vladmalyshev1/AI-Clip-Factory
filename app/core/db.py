@@ -58,6 +58,6 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 def init_schema(engine: Engine) -> None:
     """Create missing tables from ORM metadata (Alembic stays the migration path)."""
-    from app.models import job as _job_models  # noqa: F401  (registers the tables)
+    from app import models as _models  # noqa: F401  (registers every table)
 
     Base.metadata.create_all(engine)

@@ -18,6 +18,7 @@ import os
 import signal
 import socket
 import threading
+import time
 from collections.abc import Sequence
 from types import FrameType
 from typing import Any
@@ -32,13 +33,16 @@ from app.core.errors import ErrorCode
 from app.core.logging import configure_logging
 from app.core.status import JobStatus
 from app.pipeline.orchestrator import run_job
-from app.services import job_service
+from app.services import job_service, upload_service
 
 logger = logging.getLogger(__name__)
 
 MIN_POLL_SECONDS = 0.01
 MIN_HEARTBEAT_SECONDS = 0.1
 HEARTBEAT_JOIN_TIMEOUT_S = 5.0
+#: Floor for the upload TTL sweep, so a tiny configured interval cannot turn the
+#: worker loop into a filesystem scan on every iteration.
+UPLOAD_CLEANUP_MIN_SECONDS = 15.0
 
 
 class WorkerHeartbeat:
@@ -129,6 +133,25 @@ def _recover_stale(engine: Engine, settings: Settings) -> list[str]:
         return []
 
 
+def _expire_stale_uploads(factory: sessionmaker[Session], settings: Settings) -> None:
+    """Expire abandoned upload sessions and sweep orphaned chunk files.
+
+    Runs inside the worker loop (never as a separate process) so the same
+    lifecycle that owns background jobs also owns upload garbage collection.
+    Only ``.part`` and ``.chunk`` files under ``incoming`` are touched: user
+    recordings in ``originals`` are never candidates.
+    """
+    try:
+        with factory() as session:
+            expired = upload_service.expire_stale_uploads(settings, session, utc_now_ms())
+            session.commit()
+    except Exception:  # pragma: no cover - keep the loop alive
+        logger.exception("Upload cleanup failed")
+        return
+    if expired:
+        logger.info("Upload cleanup expired %d session(s)", expired)
+
+
 def _fail_job_after_error(
     factory: sessionmaker[Session], job_id: str, error_message: str
 ) -> None:
@@ -167,10 +190,16 @@ def run_worker(
     heartbeat.start()
     previous_handlers = _install_signal_handlers(stopping)
     poll_seconds = max(MIN_POLL_SECONDS, settings.worker_poll_seconds)
+    cleanup_seconds = max(UPLOAD_CLEANUP_MIN_SECONDS, settings.upload_cleanup_seconds)
+    next_cleanup = 0.0
 
     try:
         _recover_stale(engine, settings)
         while not stopping.is_set():
+            now = time.monotonic()
+            if now >= next_cleanup:
+                _expire_stale_uploads(factory, settings)
+                next_cleanup = now + cleanup_seconds
             claimed = job_service.claim_next(engine, worker_id)
             if claimed is None:
                 if once:

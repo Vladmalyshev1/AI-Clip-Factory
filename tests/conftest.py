@@ -44,6 +44,7 @@ def settings(tmp_path: Path) -> Settings:
         worker_poll_seconds=0.05,
         worker_heartbeat_seconds=0.2,
         job_stale_seconds=5.0,
+        import_roots=[tmp_path],
     )
 
 

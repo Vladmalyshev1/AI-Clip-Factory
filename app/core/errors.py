@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Final
 
 from fastapi import FastAPI, Request
@@ -17,12 +19,22 @@ from app.core.status import (
     JOB_TERMINAL_STATUSES,
     JOB_TRANSITIONS,
     STAGE_TRANSITIONS,
+    UPLOAD_TERMINAL_STATUSES,
+    UPLOAD_TRANSITIONS,
+    VIDEO_TRANSITIONS,
     JobStatus,
+    SourceKind,
     StageStatus,
+    UploadStatus,
+    VideoStatus,
     can_transition_job,
     can_transition_stage,
+    can_transition_upload,
+    can_transition_video,
     parse_job_status,
     parse_stage_status,
+    parse_upload_status,
+    parse_video_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,20 +43,33 @@ __all__ = [
     "JOB_TERMINAL_STATUSES",
     "JOB_TRANSITIONS",
     "STAGE_TRANSITIONS",
+    "UPLOAD_TERMINAL_STATUSES",
+    "UPLOAD_TRANSITIONS",
+    "VIDEO_TRANSITIONS",
     "AppError",
     "ErrorCode",
     "JobStatus",
+    "SourceKind",
     "StageCancelled",
     "StageStatus",
+    "UploadStatus",
+    "VideoStatus",
     "can_transition_job",
     "can_transition_stage",
+    "can_transition_upload",
+    "can_transition_video",
     "ensure_job_transition",
     "ensure_stage_transition",
+    "ensure_video_transition",
     "error_response",
+    "is_disk_full",
     "parse_job_status",
     "parse_stage_status",
+    "parse_upload_status",
+    "parse_video_status",
     "register_exception_handlers",
     "resolve_request_id",
+    "storage_error",
 ]
 
 
@@ -61,6 +86,20 @@ class ErrorCode(StrEnum):
     WORKER_LOST = "WORKER_LOST"
     WORKER_ERROR = "WORKER_ERROR"
     STAGE_FAILED = "STAGE_FAILED"
+    VIDEO_NOT_FOUND = "VIDEO_NOT_FOUND"
+    UPLOAD_NOT_FOUND = "UPLOAD_NOT_FOUND"
+    UPLOAD_CONFLICT = "UPLOAD_CONFLICT"
+    UPLOAD_INCOMPLETE = "UPLOAD_INCOMPLETE"
+    UPLOAD_EXPIRED = "UPLOAD_EXPIRED"
+    SOURCE_NOT_FOUND = "SOURCE_NOT_FOUND"
+    UNSUPPORTED_MEDIA = "UNSUPPORTED_MEDIA"
+    PROBE_FAILED = "PROBE_FAILED"
+    INSUFFICIENT_DISK = "INSUFFICIENT_DISK"
+    FFMPEG_NOT_FOUND = "FFMPEG_NOT_FOUND"
+    FFPROBE_NOT_FOUND = "FFPROBE_NOT_FOUND"
+    RENDER_FAILED = "RENDER_FAILED"
+    RENDER_TIMEOUT = "RENDER_TIMEOUT"
+    SUBTITLE_FAILED = "SUBTITLE_FAILED"
 
 
 _DEFAULT_STATUS: Final[dict[ErrorCode, int]] = {
@@ -74,6 +113,20 @@ _DEFAULT_STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.WORKER_LOST: 500,
     ErrorCode.WORKER_ERROR: 500,
     ErrorCode.STAGE_FAILED: 500,
+    ErrorCode.VIDEO_NOT_FOUND: 404,
+    ErrorCode.UPLOAD_NOT_FOUND: 404,
+    ErrorCode.UPLOAD_CONFLICT: 409,
+    ErrorCode.UPLOAD_INCOMPLETE: 409,
+    ErrorCode.UPLOAD_EXPIRED: 410,
+    ErrorCode.SOURCE_NOT_FOUND: 404,
+    ErrorCode.UNSUPPORTED_MEDIA: 415,
+    ErrorCode.PROBE_FAILED: 422,
+    ErrorCode.INSUFFICIENT_DISK: 507,
+    ErrorCode.FFMPEG_NOT_FOUND: 500,
+    ErrorCode.FFPROBE_NOT_FOUND: 500,
+    ErrorCode.RENDER_FAILED: 500,
+    ErrorCode.RENDER_TIMEOUT: 500,
+    ErrorCode.SUBTITLE_FAILED: 500,
 }
 
 
@@ -99,6 +152,43 @@ class StageCancelled(Exception):  # noqa: N818 - name follows the pipeline vocab
     """Internal control flow: the running stage observed a cancellation request."""
 
 
+#: ``ERROR_DISK_FULL`` on Windows; CPython usually also sets ``errno.ENOSPC``.
+DISK_FULL_WINERROR: Final = 112
+
+
+def is_disk_full(exc: OSError) -> bool:
+    """Return whether ``exc`` means the target volume ran out of space."""
+    if exc.errno == errno.ENOSPC:
+        return True
+    return getattr(exc, "winerror", None) == DISK_FULL_WINERROR
+
+
+def storage_error(exc: OSError, *, path: str | Path | None = None) -> AppError:
+    """Map a filesystem failure onto the canonical application error.
+
+    A full volume becomes ``INSUFFICIENT_DISK`` (507) with a stable ``reason``
+    so the client can free space and retry; anything else stays an internal
+    error instead of leaking a raw ``OSError``.
+    """
+    details: dict[str, Any] = {"error": str(exc)}
+    if path is not None:
+        details["path"] = str(path)
+    if is_disk_full(exc):
+        details["reason"] = "disk_full"
+        return AppError(
+            ErrorCode.INSUFFICIENT_DISK,
+            "Not enough free disk space to store this file",
+            status_code=507,
+            details=details,
+        )
+    return AppError(
+        ErrorCode.INTERNAL_ERROR,
+        f"Could not write the file: {exc}",
+        status_code=500,
+        details=details,
+    )
+
+
 def ensure_job_transition(current: JobStatus | str, target: JobStatus | str) -> None:
     """Raise :class:`AppError` when the job transition is not allowed."""
     if not can_transition_job(current, target):
@@ -117,6 +207,17 @@ def ensure_stage_transition(current: StageStatus | str, target: StageStatus | st
             ErrorCode.INVALID_STATE_TRANSITION,
             f"Invalid stage transition from '{parse_stage_status(current)}' "
             f"to '{parse_stage_status(target)}'",
+            status_code=409,
+        )
+
+
+def ensure_video_transition(current: VideoStatus | str, target: VideoStatus | str) -> None:
+    """Raise :class:`AppError` when the video transition is not allowed."""
+    if not can_transition_video(current, target):
+        raise AppError(
+            ErrorCode.INVALID_STATE_TRANSITION,
+            f"Invalid video transition from '{parse_video_status(current)}' "
+            f"to '{parse_video_status(target)}'",
             status_code=409,
         )
 

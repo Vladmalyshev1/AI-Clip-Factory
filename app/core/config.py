@@ -9,6 +9,8 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DB_FILENAME = "app.db"
+DEFAULT_MAX_UPLOAD_BYTES = 8 * 1024**3
+DEFAULT_UPLOAD_CHUNK_SIZE = 16 * 1024**2
 
 
 class Settings(BaseSettings):
@@ -37,6 +39,13 @@ class Settings(BaseSettings):
     min_free_disk_gb: float = 20.0
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_timeout_seconds: float = 1.5
+    max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+    upload_chunk_size: int = DEFAULT_UPLOAD_CHUNK_SIZE
+    upload_ttl_hours: float = 24.0
+    upload_cleanup_seconds: float = 300.0
+    #: Directories ``POST /videos/import`` may read absolute paths from.
+    #: An empty list denies every server-side import (uploads still work).
+    import_roots: list[Path] = Field(default_factory=lambda: [Path.home()])
 
     @model_validator(mode="after")
     def _default_database_url(self) -> Settings:
@@ -58,6 +67,26 @@ class Settings(BaseSettings):
         return self.data_dir / "media"
 
     @property
+    def incoming_dir(self) -> Path:
+        """Directory holding partially received uploads (safe to purge)."""
+        return self.media_root / "incoming"
+
+    @property
+    def originals_dir(self) -> Path:
+        """Directory holding immutable source recordings."""
+        return self.media_root / "originals"
+
+    @property
+    def renders_dir(self) -> Path:
+        """Directory holding rendered vertical clips."""
+        return self.media_root / "renders"
+
+    @property
+    def thumbs_dir(self) -> Path:
+        """Directory holding generated thumbnails and previews."""
+        return self.media_root / "thumbs"
+
+    @property
     def work_dir(self) -> Path:
         """Directory for per-job scratch space."""
         return self.data_dir / "work"
@@ -69,9 +98,19 @@ class Settings(BaseSettings):
             return self.log_dir
         return self.data_dir / "logs"
 
+    def media_dirs(self) -> tuple[Path, ...]:
+        """Return every media subdirectory in creation order."""
+        return (
+            self.media_root,
+            self.incoming_dir,
+            self.originals_dir,
+            self.renders_dir,
+            self.thumbs_dir,
+        )
+
     def ensure_dirs(self) -> None:
         """Create every directory the application writes to."""
-        for path in (self.data_dir, self.media_root, self.work_dir, self.logs_dir):
+        for path in (*self.media_dirs(), self.data_dir, self.work_dir, self.logs_dir):
             path.mkdir(parents=True, exist_ok=True)
 
 

@@ -5,11 +5,8 @@ from __future__ import annotations
 import logging
 import shutil
 import socket
-import subprocess
-import sys
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,6 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.clock import utc_now_ms
 from app.core.config import Settings
 from app.core.status import JobStatus
+from app.media.binaries import DEFAULT_TIMEOUT_SECONDS, find_ffmpeg, find_ffprobe, run_command
 from app.models.job import Job
 from app.schemas.system import (
     DiskStatus,
@@ -31,8 +29,7 @@ from app.schemas.system import (
 
 logger = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PROBE_TIMEOUT_SECONDS = 15.0
+PROBE_TIMEOUT_SECONDS = DEFAULT_TIMEOUT_SECONDS
 PROBE_CACHE_TTL_SECONDS = 30.0
 FFMPEG_VERSION_PATTERN = r"ffmpeg version (n?[\w.\-]+)"
 BYTES_PER_GB = 1024**3
@@ -40,75 +37,6 @@ BYTES_PER_GB = 1024**3
 _probe_cache: dict[str, tuple[float, FfmpegStatus]] = {}
 _probe_lock = threading.Lock()
 
-
-@dataclass(frozen=True)
-class CommandResult:
-    """Outcome of a short probe command."""
-
-    returncode: int
-    output: str
-
-
-def _creation_flags() -> int:
-    if sys.platform != "win32":
-        return 0
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-
-def run_command(command: list[str], *, timeout: float = PROBE_TIMEOUT_SECONDS) -> CommandResult:
-    """Run a probe command, never raising on failure."""
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            creationflags=_creation_flags(),
-            check=False,
-        )
-    except FileNotFoundError:
-        return CommandResult(returncode=127, output="executable not found")
-    except subprocess.TimeoutExpired:
-        return CommandResult(returncode=124, output=f"timed out after {timeout}s")
-    except OSError as exc:  # pragma: no cover - platform specific
-        return CommandResult(returncode=126, output=str(exc))
-    return CommandResult(
-        returncode=completed.returncode,
-        output=(completed.stdout or "") + (completed.stderr or ""),
-    )
-
-
-def resolve_ffmpeg_path(settings: Settings) -> Path | None:
-    """Locate ffmpeg: explicit setting, bundled tools directory, then PATH."""
-    candidate = Path(settings.ffmpeg_path) if settings.ffmpeg_path else None
-    if candidate is not None and candidate.is_file():
-        return candidate
-    exe = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-    bundled = REPO_ROOT / "tools" / "ffmpeg" / "bin" / exe
-    if bundled.is_file():
-        return bundled
-    found = shutil.which("ffmpeg")
-    return Path(found) if found else None
-
-
-def resolve_ffprobe_path(ffmpeg: Path | None, settings: Settings) -> Path | None:
-    """Locate ffprobe next to ffmpeg, in the bundled directory or on PATH."""
-    exe = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
-    candidates: list[Path] = []
-    if ffmpeg is not None:
-        candidates.append(ffmpeg.with_name(exe))
-    if settings.ffmpeg_path:
-        candidates.append(Path(settings.ffmpeg_path).with_name(exe))
-    candidates.append(REPO_ROOT / "tools" / "ffmpeg" / "bin" / exe)
-    found = shutil.which("ffprobe")
-    if found:
-        candidates.append(Path(found))
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
 
 
 def _parse_version(output: str) -> str | None:
@@ -207,11 +135,11 @@ def ollama_status(settings: Settings) -> OllamaStatus:
 
 def get_system_status(settings: Settings, session_factory: sessionmaker[Session]) -> SystemStatus:
     """Collect the full readiness report (always succeeds, never raises)."""
-    ffmpeg_path = resolve_ffmpeg_path(settings)
+    ffmpeg_path = find_ffmpeg(settings)
     ffmpeg = (
         probe_ffmpeg(ffmpeg_path) if ffmpeg_path is not None else FfmpegStatus(found=False)
     )
-    ffprobe = probe_ffprobe(resolve_ffprobe_path(ffmpeg_path, settings))
+    ffprobe = probe_ffprobe(find_ffprobe(settings, ffmpeg_path=ffmpeg_path))
     ollama = ollama_status(settings)
     ready = ffmpeg.found and ffmpeg.libass and ffprobe.found
     return SystemStatus(
