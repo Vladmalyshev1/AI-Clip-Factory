@@ -159,6 +159,35 @@ def test_run_stops_quickly_when_cancelled(ffmpeg_binary: Path, tmp_path: Path) -
 
 
 @pytest.mark.media
+def test_run_polls_cancel_check_and_aborts_a_running_child(
+    ffmpeg_binary: Path, tmp_path: Path
+) -> None:
+    """A stuck child must be stoppable even when it stops emitting progress."""
+    runner = FFmpegRunner(ffmpeg_binary)
+
+    class JobAbortError(Exception):
+        pass
+
+    polls: list[int] = []
+
+    def cancel_check() -> None:
+        polls.append(1)
+        if len(polls) >= 5:
+            raise JobAbortError("cancelled by the job")
+
+    started = time.monotonic()
+    with pytest.raises(JobAbortError):
+        runner.run(
+            _encode_args(tmp_path / "aborted.mp4", seconds="30", realtime=True),
+            duration_ms=30_000,
+            cancel_check=cancel_check,
+        )
+
+    assert len(polls) >= 5
+    assert time.monotonic() - started < 5.0
+
+
+@pytest.mark.media
 def test_run_passes_shell_metacharacters_verbatim(ffmpeg_binary: Path, tmp_path: Path) -> None:
     target = tmp_path / "out put & ;.mp4"
     runner = FFmpegRunner(ffmpeg_binary)

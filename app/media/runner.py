@@ -207,6 +207,7 @@ class FFmpegRunner:
         duration_ms: int | None = None,
         on_progress: Callable[[float], None] | None = None,
         cancel_event: threading.Event | None = None,
+        cancel_check: Callable[[], None] | None = None,
         timeout_s: float | None = None,
         cwd: Path | None = None,
     ) -> RenderResult:
@@ -214,6 +215,12 @@ class FFmpegRunner:
 
         Raises :class:`RenderCancelled` when ``cancel_event`` fires,
         :class:`RenderError` on timeout or non-zero exit.
+
+        ``cancel_check`` is polled on every loop iteration and may raise any
+        exception to abort the run (the pipeline passes a callback that raises
+        ``StageCancelled``). It exists because progress-driven cancellation only
+        works while FFmpeg keeps emitting progress: a stuck child process would
+        otherwise make a job uncancellable. The child is always stopped.
         """
         command = self.build_command(args)
         started = time.monotonic()
@@ -256,6 +263,8 @@ class FFmpegRunner:
             last_emit = 0.0
             status = "exited"
             while True:
+                if cancel_check is not None:
+                    cancel_check()
                 if cancel_event is not None and cancel_event.is_set():
                     status = "cancelled"
                     break

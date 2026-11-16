@@ -47,6 +47,24 @@ class Settings(BaseSettings):
     #: An empty list denies every server-side import (uploads still work).
     import_roots: list[Path] = Field(default_factory=lambda: [Path.home()])
 
+    # Speech recognition (M3). The model is resolved from the local Hugging Face
+    # cache by default and is never downloaded implicitly: a missing model is
+    # reported as a stage error with an explicit fetch instruction.
+    asr_model: str = Field(default="Systran/faster-whisper-small", min_length=1)
+    asr_device: str = Field(default="cpu", pattern="^(cpu|cuda|auto)$")
+    asr_compute_type: str = Field(
+        default="int8",
+        pattern="^(default|auto|int8|int8_float32|int8_float16|int16|float16|float32|bfloat16)$",
+    )
+    asr_language: str = Field(default="en", min_length=2, max_length=8)
+    asr_chunk_seconds: int = Field(default=300, ge=30, le=1800)
+    asr_cpu_threads: int = Field(default=6, ge=0, le=64)
+    asr_beam_size: int = Field(default=5, ge=1, le=10)
+    asr_vad_filter: bool = True
+    asr_local_files_only: bool = True
+    asr_chunk_max_attempts: int = Field(default=3, ge=1, le=10)
+    asr_condition_on_previous_text: bool = True
+
     @model_validator(mode="after")
     def _default_database_url(self) -> Settings:
         """Derive a SQLite URL under ``data_dir`` when none was configured.

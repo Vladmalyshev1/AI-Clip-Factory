@@ -26,6 +26,7 @@ markers = [
     "api: FastAPI endpoint tests",
     "media: tests that require a real ffmpeg/ffprobe",
     "ai: pipeline tests with a fake transcriber",
+    "db: database-backed service tests",
     "slow: opt-in tests (real model, long media)",
     "gpu: requires a working CUDA/NVENC device",
     "windows_only: Windows-specific behaviour",

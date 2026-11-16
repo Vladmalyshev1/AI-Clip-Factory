@@ -65,7 +65,7 @@ class Check:
 @dataclass
 class Report:
     checks: list[Check] = field(default_factory=list)
-    root: Path = Path.cwd()
+    root: Path = field(default_factory=Path.cwd)
 
     def add(self, check: Check) -> None:
         self.checks.append(check)

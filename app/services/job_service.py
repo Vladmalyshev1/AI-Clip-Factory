@@ -116,17 +116,17 @@ def list_job_stages(session: Session, job_id: str) -> list[JobStage]:
     )
 
 
-def _registry_stage_names() -> list[str]:
-    from app.pipeline.stages import REGISTRY
+def _registry_stage_names(job_type: str | None = None) -> list[str]:
+    from app.pipeline.stages import stages_for
 
-    return [stage.name for stage in REGISTRY]
+    return [stage.name for stage in stages_for(job_type)]
 
 
 def _ensure_stages(session: Session, job: Job) -> list[JobStage]:
-    """Create missing stage rows for the registry stages (idempotent)."""
+    """Create missing stage rows for the stages of ``job.type`` (idempotent)."""
     existing = {stage.name: stage for stage in list_job_stages(session, job.id)}
     stages: list[JobStage] = []
-    for ordinal, name in enumerate(_registry_stage_names()):
+    for ordinal, name in enumerate(_registry_stage_names(job.type)):
         stage = existing.get(name)
         if stage is None:
             stage = JobStage(

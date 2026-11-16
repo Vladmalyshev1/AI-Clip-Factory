@@ -15,7 +15,7 @@ from app.core.errors import AppError, ErrorCode, StageCancelled
 from app.core.paths import safe_name
 from app.core.status import JobStatus, StageStatus
 from app.models.job import Job
-from app.pipeline.stages import REGISTRY
+from app.pipeline.stages import stages_for
 from app.pipeline.stages.base import ProgressReporter, Stage, StageContext
 from app.services import job_service
 from app.services.job_service import ClaimedJob
@@ -123,7 +123,7 @@ def run_job(
     makes a restarted worker resume instead of redoing work.
     """
     factory = make_session_factory(engine)
-    stages: tuple[Stage, ...] = REGISTRY
+    stages: tuple[Stage, ...] = stages_for(job.type)
     total = len(stages)
     if total == 0:  # pragma: no cover - registry is never empty in practice
         with factory() as session:
@@ -179,6 +179,8 @@ def run_job(
             work_dir=work_dir,
             params=params,
             checkpoint=checkpoint,
+            settings=settings,
+            session_factory=factory,
         )
         reporter: ProgressReporter = StageProgressReporter(
             factory,
