@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     asr_chunk_max_attempts: int = Field(default=3, ge=1, le=10)
     asr_condition_on_previous_text: bool = True
 
+    # Highlight detection (M4). The detector consumes a completed transcript
+    # only; every knob below shapes candidate boundaries and scoring.
+    highlight_padding_ms: int = Field(default=2000, ge=0)
+    highlight_merge_gap_ms: int = Field(default=10_000, ge=0)
+    highlight_min_duration_ms: int = Field(default=15_000, ge=0)
+    highlight_max_duration_ms: int = Field(default=120_000, ge=1000)
+    highlight_context_window_ms: int = Field(default=30_000, ge=1000)
+    highlight_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    highlight_max_candidates: int = Field(default=50, ge=1, le=500)
+
     @model_validator(mode="after")
     def _default_database_url(self) -> Settings:
         """Derive a SQLite URL under ``data_dir`` when none was configured.

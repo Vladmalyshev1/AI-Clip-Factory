@@ -132,3 +132,24 @@ $env:ACF_ASR_SMOKE_AUDIO = "D:\vods\stream.mp4"
 `ACF_ASR_SMOKE_SECONDS` (default `60`) caps how many seconds are transcribed. The
 test is skipped, never failed, when the variable is unset, the file is missing,
 FFmpeg is unavailable or the model is not cached.
+
+## Highlight detection (M4)
+
+Rule-based detection over a completed transcript. Settings use the usual `ACF_`
+prefix.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ACF_HIGHLIGHT_PADDING_MS` | `2000` | context padding added to both sides of a raw moment |
+| `ACF_HIGHLIGHT_MERGE_GAP_MS` | `10000` | active moments closer than this are merged |
+| `ACF_HIGHLIGHT_MIN_DURATION_MS` | `15000` | shorter candidates are dropped (after padding) |
+| `ACF_HIGHLIGHT_MAX_DURATION_MS` | `120000` | longer candidates are truncated |
+| `ACF_HIGHLIGHT_CONTEXT_WINDOW_MS` | `30000` | window used to score neighbouring segments |
+| `ACF_HIGHLIGHT_MIN_SCORE` | `0.35` | candidates scoring below are dropped |
+| `ACF_HIGHLIGHT_MAX_CANDIDATES` | `50` | keep the best N candidates per run |
+
+Re-running an analysis recomputes the whole candidate list atomically; a
+completed analysis needs `force=true` (see
+`POST /videos/{id}/detect-highlights`), which purges the stored candidates
+first. The current configuration snapshot is stored on the analysis row as
+`options`.

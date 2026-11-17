@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from app.pipeline.stages import (
     DEFAULT_PIPELINE,
+    HIGHLIGHT_JOB_TYPE,
     PIPELINES,
     PLACEHOLDER_JOB_TYPE,
     TRANSCRIBE_JOB_TYPE,
@@ -34,6 +35,10 @@ def test_placeholder_pipeline_is_unchanged() -> None:
 
 def test_transcribe_pipeline_runs_the_asr_stage() -> None:
     assert [stage.name for stage in stages_for(TRANSCRIBE_JOB_TYPE)] == ["asr"]
+
+
+def test_highlight_pipeline_runs_the_highlight_stage() -> None:
+    assert [stage.name for stage in stages_for(HIGHLIGHT_JOB_TYPE)] == ["highlights"]
 
 
 @pytest.mark.parametrize("job_type", [None, "", "unknown", "  TranscriBE  "])

@@ -13,7 +13,9 @@ from typing import Final
 
 from app.pipeline.stages.asr import AsrStage
 from app.pipeline.stages.base import ProgressReporter, Stage, StageContext, StageResult
+from app.pipeline.stages.highlights import HighlightStage
 from app.pipeline.stages.noop import NoopStage
+from app.services.highlight_service import HIGHLIGHT_JOB_TYPE
 from app.services.transcript_service import ASR_JOB_TYPE as TRANSCRIBE_JOB_TYPE
 
 #: Job type of the placeholder pipeline that exercises queue semantics.
@@ -22,6 +24,7 @@ PLACEHOLDER_JOB_TYPE: Final = "pipeline"
 PIPELINES: Final[dict[str, tuple[Stage, ...]]] = {
     PLACEHOLDER_JOB_TYPE: (NoopStage("noop"), NoopStage("noop2")),
     TRANSCRIBE_JOB_TYPE: (AsrStage(),),
+    HIGHLIGHT_JOB_TYPE: (HighlightStage(),),
 }
 
 #: Pipeline used for an unknown or missing job type (backwards compatible).
@@ -36,6 +39,7 @@ def stages_for(job_type: str | None) -> tuple[Stage, ...]:
 
 __all__ = [
     "DEFAULT_PIPELINE",
+    "HIGHLIGHT_JOB_TYPE",
     "PIPELINES",
     "PLACEHOLDER_JOB_TYPE",
     "TRANSCRIBE_JOB_TYPE",

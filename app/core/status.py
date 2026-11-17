@@ -178,6 +178,54 @@ CHUNK_TRANSITIONS: Final[dict[TranscriptChunkStatus, frozenset[TranscriptChunkSt
     TranscriptChunkStatus.COMPLETED: frozenset({TranscriptChunkStatus.COMPLETED}),
 }
 
+
+class HighlightStatus(StrEnum):
+    """Lifecycle states of a highlight analysis of one video."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
+#: Highlight transitions mirror the transcript semantics: ``running → running``
+#: survives a crashed worker, ``failed → failed`` stays idempotent, only an
+#: explicit reset moves ``completed → pending``.
+HIGHLIGHT_TRANSITIONS: Final[dict[HighlightStatus, frozenset[HighlightStatus]]] = {
+    HighlightStatus.PENDING: frozenset(
+        {HighlightStatus.RUNNING, HighlightStatus.CANCELED, HighlightStatus.FAILED}
+    ),
+    HighlightStatus.RUNNING: frozenset(
+        {
+            # An analysis left ``running`` by a crashed worker is resumed.
+            HighlightStatus.RUNNING,
+            HighlightStatus.COMPLETED,
+            HighlightStatus.FAILED,
+            HighlightStatus.CANCELED,
+            HighlightStatus.PENDING,
+        }
+    ),
+    # A failed or interrupted analysis is resumed, never recreated.
+    HighlightStatus.FAILED: frozenset(
+        {
+            HighlightStatus.PENDING,
+            HighlightStatus.RUNNING,
+            # Recording why a run failed again must stay idempotent.
+            HighlightStatus.FAILED,
+        }
+    ),
+    HighlightStatus.CANCELED: frozenset(
+        {
+            HighlightStatus.PENDING,
+            # A canceled run that then hits an infrastructure error.
+            HighlightStatus.FAILED,
+        }
+    ),
+    # Only an explicit force re-run resets a completed analysis.
+    HighlightStatus.COMPLETED: frozenset({HighlightStatus.PENDING}),
+}
+
 JOB_TRANSITIONS: Final[dict[JobStatus, frozenset[JobStatus]]] = {
     JobStatus.QUEUED: frozenset({JobStatus.RUNNING, JobStatus.CANCELED}),
     JobStatus.RUNNING: frozenset(
@@ -284,4 +332,20 @@ def can_transition_chunk(
 ) -> bool:
     """Return whether a chunk may move from ``current`` to ``target``."""
     return parse_chunk_status(target) in CHUNK_TRANSITIONS[parse_chunk_status(current)]
+
+
+def parse_highlight_status(value: HighlightStatus | str) -> HighlightStatus:
+    """Coerce a stored value into :class:`HighlightStatus`."""
+    if isinstance(value, HighlightStatus):
+        return value
+    return HighlightStatus(value)
+
+
+def can_transition_highlight(
+    current: HighlightStatus | str, target: HighlightStatus | str
+) -> bool:
+    """Return whether a highlight analysis may move from ``current`` to ``target``."""
+    return parse_highlight_status(target) in HIGHLIGHT_TRANSITIONS[
+        parse_highlight_status(current)
+    ]
 
