@@ -226,6 +226,46 @@ HIGHLIGHT_TRANSITIONS: Final[dict[HighlightStatus, frozenset[HighlightStatus]]] 
     HighlightStatus.COMPLETED: frozenset({HighlightStatus.PENDING}),
 }
 
+class ClipStatus(StrEnum):
+    """Lifecycle states of one generated clip."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
+#: A completed clip is terminal: re-rendering it would overwrite a file the user
+#: may already have downloaded. Only failed or canceled clips can be retried.
+CLIP_TRANSITIONS: Final[dict[ClipStatus, frozenset[ClipStatus]]] = {
+    ClipStatus.PENDING: frozenset(
+        {ClipStatus.PROCESSING, ClipStatus.FAILED, ClipStatus.CANCELED}
+    ),
+    ClipStatus.PROCESSING: frozenset(
+        {
+            # A clip left ``processing`` by a crashed worker is resumed.
+            ClipStatus.PROCESSING,
+            ClipStatus.COMPLETED,
+            ClipStatus.FAILED,
+            ClipStatus.CANCELED,
+            # A graceful worker shutdown returns the clip to the queue.
+            ClipStatus.PENDING,
+        }
+    ),
+    ClipStatus.FAILED: frozenset(
+        {
+            ClipStatus.PENDING,
+            ClipStatus.PROCESSING,
+            # Recording why a retry failed again must stay idempotent.
+            ClipStatus.FAILED,
+        }
+    ),
+    ClipStatus.CANCELED: frozenset({ClipStatus.PENDING, ClipStatus.PROCESSING}),
+    ClipStatus.COMPLETED: frozenset(),
+}
+
+
 JOB_TRANSITIONS: Final[dict[JobStatus, frozenset[JobStatus]]] = {
     JobStatus.QUEUED: frozenset({JobStatus.RUNNING, JobStatus.CANCELED}),
     JobStatus.RUNNING: frozenset(
@@ -348,4 +388,16 @@ def can_transition_highlight(
     return parse_highlight_status(target) in HIGHLIGHT_TRANSITIONS[
         parse_highlight_status(current)
     ]
+
+
+def parse_clip_status(value: ClipStatus | str) -> ClipStatus:
+    """Coerce a stored value into :class:`ClipStatus`."""
+    if isinstance(value, ClipStatus):
+        return value
+    return ClipStatus(value)
+
+
+def can_transition_clip(current: ClipStatus | str, target: ClipStatus | str) -> bool:
+    """Return whether a clip may move from ``current`` to ``target``."""
+    return parse_clip_status(target) in CLIP_TRANSITIONS[parse_clip_status(current)]
 

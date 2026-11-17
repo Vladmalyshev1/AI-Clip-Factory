@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from app.pipeline.stages import (
+    CLIP_JOB_TYPE,
     DEFAULT_PIPELINE,
     HIGHLIGHT_JOB_TYPE,
     PIPELINES,
@@ -39,6 +40,10 @@ def test_transcribe_pipeline_runs_the_asr_stage() -> None:
 
 def test_highlight_pipeline_runs_the_highlight_stage() -> None:
     assert [stage.name for stage in stages_for(HIGHLIGHT_JOB_TYPE)] == ["highlights"]
+
+
+def test_clip_pipeline_runs_the_render_stage() -> None:
+    assert [stage.name for stage in stages_for(CLIP_JOB_TYPE)] == ["render"]
 
 
 @pytest.mark.parametrize("job_type", [None, "", "unknown", "  TranscriBE  "])

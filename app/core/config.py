@@ -75,6 +75,54 @@ class Settings(BaseSettings):
     highlight_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
     highlight_max_candidates: int = Field(default=50, ge=1, le=500)
 
+    # Clip generation (M6). All durations are integer milliseconds. The encoder
+    # knobs only pick between the modes implemented by ``app.media.cut``.
+    clip_output_dir: Path | None = None
+    clip_pre_padding_ms: int = Field(default=5000, ge=0)
+    clip_post_padding_ms: int = Field(default=10_000, ge=0)
+    clip_min_duration_ms: int = Field(default=5000, ge=1000)
+    # Matches ACF_HIGHLIGHT_MAX_DURATION_MS: an M4 candidate is at most that long,
+    # so the default pair can always be turned into a renderable window.
+    clip_max_duration_ms: int = Field(default=120_000, ge=1000)
+    clip_default_encoding_mode: str = Field(default="accurate", pattern="^(accurate|fast)$")
+    clip_default_output_format: str = Field(default="vertical", pattern="^(original|vertical)$")
+    clip_vertical_width: int = Field(default=1080, ge=2)
+    clip_vertical_height: int = Field(default=1920, ge=2)
+    clip_default_crop_mode: str = Field(default="pad", pattern="^(crop|pad)$")
+    clip_ffmpeg_timeout_s: float = Field(default=600.0, gt=0)
+    clip_max_concurrent_jobs: int = Field(default=50, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_clip_settings(self) -> Settings:
+        """Reject clip settings that could never describe a valid render."""
+        # Local import: ``app.media.validate`` imports this module.
+        from app.media.validate import DEFAULT_ASPECT_RATIO, DEFAULT_ASPECT_TOLERANCE
+
+        if self.clip_min_duration_ms > self.clip_max_duration_ms:
+            raise ValueError(
+                "ACF_CLIP_MIN_DURATION_MS must not exceed ACF_CLIP_MAX_DURATION_MS"
+            )
+        if (
+            self.clip_default_encoding_mode == "fast"
+            and self.clip_default_output_format != "original"
+        ):
+            raise ValueError(
+                "ACF_CLIP_DEFAULT_ENCODING_MODE=fast requires "
+                "ACF_CLIP_DEFAULT_OUTPUT_FORMAT=original"
+            )
+        for name in ("clip_vertical_width", "clip_vertical_height"):
+            value = getattr(self, name)
+            if not 16 <= value <= 4096:
+                raise ValueError(f"{name} must be between 16 and 4096")
+            if value % 2:
+                raise ValueError(f"{name} must be even for yuv420p output")
+        if (
+            abs(self.clip_vertical_width / self.clip_vertical_height - DEFAULT_ASPECT_RATIO)
+            > DEFAULT_ASPECT_TOLERANCE
+        ):
+            raise ValueError("ACF_CLIP_VERTICAL_WIDTH/HEIGHT must keep the 9:16 aspect ratio")
+        return self
+
     @model_validator(mode="after")
     def _default_database_url(self) -> Settings:
         """Derive a SQLite URL under ``data_dir`` when none was configured.
@@ -115,6 +163,13 @@ class Settings(BaseSettings):
         return self.media_root / "thumbs"
 
     @property
+    def clips_dir(self) -> Path:
+        """Directory holding generated clips (``clip_output_dir`` wins)."""
+        if self.clip_output_dir is not None:
+            return self.clip_output_dir
+        return self.media_root / "clips"
+
+    @property
     def work_dir(self) -> Path:
         """Directory for per-job scratch space."""
         return self.data_dir / "work"
@@ -134,6 +189,7 @@ class Settings(BaseSettings):
             self.originals_dir,
             self.renders_dir,
             self.thumbs_dir,
+            self.clips_dir,
         )
 
     def ensure_dirs(self) -> None:

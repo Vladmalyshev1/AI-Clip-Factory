@@ -57,6 +57,20 @@ def build_vertical_filter(layout: VerticalLayout | None = None) -> str:
     )
 
 
+def build_crop_filter(layout: VerticalLayout | None = None) -> str:
+    """Return the fill-crop ``filter_complex`` fragment ``[0:v] -> [vout]``.
+
+    The frame is scaled up until it covers the canvas and the overflow is cut
+    symmetrically, so the aspect ratio is preserved and no black bars appear.
+    """
+    resolved = layout if layout is not None else VerticalLayout()
+    width, height = resolved.width, resolved.height
+    return (
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},format=yuv420p[vout]"
+    )
+
+
 #: Characters the option-value parser treats specially (level 1).
 _OPTION_VALUE_SPECIALS: Final = "\\':"
 #: Characters the filtergraph parser treats specially (level 2).
@@ -94,9 +108,10 @@ def build_clip_filtergraph(
     *,
     ass_path: str | Path | None = None,
     layout: VerticalLayout | None = None,
+    crop: bool = False,
 ) -> str:
     """Return the full clip graph, ending in ``[vfinal]`` when subtitles are burned."""
-    graph = build_vertical_filter(layout)
+    graph = build_crop_filter(layout) if crop else build_vertical_filter(layout)
     if ass_path is None:
         return graph
     return f"{graph};[vout]{build_ass_filter(ass_path)}[vfinal]"
@@ -110,6 +125,7 @@ __all__ = [
     "VerticalLayout",
     "build_ass_filter",
     "build_clip_filtergraph",
+    "build_crop_filter",
     "build_vertical_filter",
     "escape_filter_path",
 ]

@@ -153,3 +153,33 @@ completed analysis needs `force=true` (see
 `POST /videos/{id}/detect-highlights`), which purges the stored candidates
 first. The current configuration snapshot is stored on the analysis row as
 `options`.
+
+## Clip generation (M6)
+
+One `clip` job renders one clip row, from a stored candidate to a validated
+MP4 file. Every duration is integer milliseconds; the render parameters are
+snapshotted on the clip (`options`) and never re-read from the environment
+during a run, so changing the settings affects only new clips.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ACF_CLIP_OUTPUT_DIR` | `<media_root>/clips` | where published clips are written |
+| `ACF_CLIP_PRE_PADDING_MS` | `5000` | padding before the candidate |
+| `ACF_CLIP_POST_PADDING_MS` | `10000` | padding after the candidate |
+| `ACF_CLIP_MIN_DURATION_MS` | `5000` | shorter windows are grown, never emitted |
+| `ACF_CLIP_MAX_DURATION_MS` | `120000` | longer windows are refused; matches `ACF_HIGHLIGHT_MAX_DURATION_MS` |
+| `ACF_CLIP_DEFAULT_ENCODING_MODE` | `accurate` | `accurate` re-encodes; `fast` stream-copies |
+| `ACF_CLIP_DEFAULT_OUTPUT_FORMAT` | `vertical` | `vertical` 9:16 canvas or `original` geometry |
+| `ACF_CLIP_VERTICAL_WIDTH` / `_HEIGHT` | `1080` / `1920` | canvas size, both must be even |
+| `ACF_CLIP_DEFAULT_CROP_MODE` | `pad` | `pad` = blurred background, `crop` = fill and cut sides |
+| `ACF_CLIP_FFMPEG_TIMEOUT_S` | `600` | hard timeout of one render |
+| `ACF_CLIP_MAX_CONCURRENT_JOBS` | `50` | queued+running clip jobs per video; more answers 409 |
+
+Generated files live in `clips/{video_id}/{clip_id}.mp4` and are published
+atomically: the render goes to `.{clip_id}.part.mp4`, is probed with
+`validate_render` (duration, geometry, audio, aspect ratio) and only then
+renamed. A failed or cancelled render deletes the partial file; the source
+recording is never modified. `fast` keeps the original geometry and snaps to
+keyframes, so its duration is approximate by design. A vertical canvas must
+keep 9:16 (a square or 4:5 request is a 422 before any render) and `fast` is
+only accepted together with `original`.

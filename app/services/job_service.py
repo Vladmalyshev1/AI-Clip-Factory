@@ -469,6 +469,22 @@ def _requeue_stale(
     )
 
 
+def _reconcile_clip(
+    session: Session, job: Job, now_ms: int, *, canceled: bool, error_message: str = ""
+) -> None:
+    """Keep a clip row truthful when its job ends inside the queue, not the stage.
+
+    The render stage records its own success/failure/cancellation; these paths
+    (a lost worker, a job canceled through the job API) never reach it.
+    """
+    from app.services.clip_service import CLIP_JOB_TYPE, reconcile_clip_job
+
+    if job.type == CLIP_JOB_TYPE:
+        reconcile_clip_job(
+            session, job.id, canceled=canceled, error_message=error_message, now_ms=now_ms
+        )
+
+
 def _fail_worker_lost(
     session: Session, job: Job, now_ms: int, *, stage: JobStage | None
 ) -> None:
@@ -494,6 +510,7 @@ def _fail_worker_lost(
         now_ms=now_ms,
         payload={"error_code": ErrorCode.WORKER_LOST.value},
     )
+    _reconcile_clip(session, job, now_ms, canceled=False, error_message=message)
 
 
 def request_cancel(session: Session, job_id: str) -> Job:
@@ -561,6 +578,7 @@ def _finalize_cancel(
         message="Job canceled",
         now_ms=now_ms,
     )
+    _reconcile_clip(session, job, now_ms, canceled=True)
 
 
 def finish_canceled(
@@ -674,7 +692,19 @@ def mark_job_failed(
 
 def retry(session: Session, job_id: str, from_stage: str | None = None) -> Job:
     """Reset a failed/canceled job (optionally from a stage) back to ``queued``."""
+    from app.services.clip_service import CLIP_JOB_TYPE
+
     job = get_job(session, job_id)
+    if job.type == CLIP_JOB_TYPE:
+        # Re-queuing a stale clip job would race the clip's current job for the
+        # same render paths; the clip endpoint owns that decision.
+        raise AppError(
+            ErrorCode.CLIP_CONFLICT,
+            f"Job '{job_id}' renders a clip; retry it through "
+            "POST /clips/{clip_id}/retry",
+            status_code=409,
+            details={"job_id": job_id, "clip_id": load_json_dict(job.params_json).get("clip_id")},
+        )
     now = utc_now_ms()
     status = JobStatus(job.status)
     if status not in (JobStatus.FAILED, JobStatus.CANCELED):
