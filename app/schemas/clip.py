@@ -117,6 +117,8 @@ class ClipRead(BaseModel):
 
     id: str
     video_id: str
+    kind: str = "auto"
+    parent_clip_id: str | None = None
     highlight_id: str | None = None
     highlight_candidate_id: str | None = None
     status: str
@@ -170,6 +172,8 @@ def clip_to_read(clip: Clip) -> ClipRead:
     return ClipRead(
         id=clip.id,
         video_id=clip.video_id,
+        kind=clip.kind,
+        parent_clip_id=clip.parent_clip_id,
         highlight_id=clip.highlight_id,
         highlight_candidate_id=clip.highlight_candidate_id,
         status=clip.status,

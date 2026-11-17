@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #14161f;
+  --color-surface-raised: #1c1f2b;
+  --color-surface-border: #2a2e3d;
+  --color-accent: #8b5cf6;
+  --color-accent-soft: #a78bfa;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-surface text-slate-200 antialiased;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}

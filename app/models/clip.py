@@ -10,7 +10,7 @@ from __future__ import annotations
 from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.status import ClipStatus
+from app.core.status import ClipKind, ClipStatus
 from app.models.base import Base
 from app.models.job import new_id
 
@@ -22,6 +22,8 @@ class Clip(Base):
     __table_args__ = (
         Index("ix_clips_video_id", "video_id"),
         Index("ix_clips_status_created", "status", "created_at"),
+        Index("ix_clips_parent_clip_id", "parent_clip_id"),
+        Index("ix_clips_kind_created", "kind", "created_at"),
         # A candidate may produce at most one clip row; re-generating resets the
         # existing row instead of duplicating it.
         Index("uq_clips_candidate_id", "highlight_candidate_id", unique=True),
@@ -47,7 +49,17 @@ class Clip(Base):
         nullable=True,
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, default=ClipStatus.PENDING.value)
+    #: ``auto`` is a generated clip; ``export`` is a re-render cut from one.
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default=ClipKind.AUTO.value)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The clip this export was cut from (``None`` for generated clips).
+    parent_clip_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("clips.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    #: Editor draft of one clip (bounds, format, subtitles), JSON.
+    edit_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     end_ms: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -247,6 +247,42 @@ def list_clips(
     return items, int(total or 0)
 
 
+def list_library(
+    session: Session,
+    *,
+    video_id: str | None = None,
+    status: str | None = None,
+    kind: str | None = None,
+    search: str | None = None,
+    sort: str = "date",
+    offset: int = 0,
+    limit: int = DEFAULT_LIMIT,
+) -> tuple[list[Clip], int]:
+    """Cross-video clip library: filters, name search, score/date sorting."""
+    conditions = []
+    if video_id is not None:
+        conditions.append(Clip.video_id == video_id)
+    if status is not None:
+        conditions.append(Clip.status == status)
+    if kind is not None:
+        conditions.append(Clip.kind == kind)
+    if search:
+        conditions.append(Clip.title.ilike(f"%{search}%"))
+    order = (
+        (Clip.score.desc().nulls_last(), Clip.id.desc())
+        if sort == "score"
+        else (Clip.created_at.desc(), Clip.id.desc())
+    )
+    base = select(Clip).where(*conditions) if conditions else select(Clip)
+    total = session.scalar(select(func.count()).select_from(base.subquery()))
+    items = list(
+        session.scalars(
+            base.order_by(*order).limit(max(1, limit)).offset(max(0, offset))
+        ).all()
+    )
+    return items, int(total or 0)
+
+
 def clip_stats(session: Session, video_id: str) -> ClipStats:
     """Count the clips of a video per status."""
     rows = session.execute(
@@ -613,6 +649,21 @@ def delete_clip(session: Session, clip: Clip, *, settings: Settings) -> None:
             status_code=409,
             details={"clip_id": clip.id},
         )
+    # Exports of this clip would CASCADE away silently and leak their files;
+    # delete them explicitly (refusing active ones) before the parent row.
+    children = list(
+        session.scalars(select(Clip).where(Clip.parent_clip_id == clip.id)).all()
+    )
+    for child in children:
+        if parse_clip_status(child.status) is ClipStatus.PROCESSING:
+            raise AppError(
+                ErrorCode.CLIP_CONFLICT,
+                f"Export '{child.id}' of this clip is processing; cancel it first",
+                status_code=409,
+                details={"clip_id": clip.id, "export_id": child.id},
+            )
+    for child in children:
+        delete_clip(session, child, settings=settings)
     job = _active_job(session, clip)
     if job is not None:
         job_service.request_cancel(session, job.id)
@@ -781,6 +832,7 @@ __all__ = [
     "get_clip",
     "interrupt_clip",
     "list_clips",
+    "list_library",
     "reconcile_clip_job",
     "resolve_clip_file",
     "retry_clip",

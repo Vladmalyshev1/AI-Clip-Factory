@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import DbSessionDep, SettingsDep
 from app.core.errors import AppError, ErrorCode
 from app.core.paths import safe_name
-from app.core.status import ClipStatus
+from app.core.status import CLIP_KINDS, ClipStatus
 from app.models.clip import Clip
 from app.schemas.clip import (
     ClipGenerateRequest,
@@ -28,7 +28,8 @@ from app.schemas.clip import (
     clip_to_read,
 )
 from app.schemas.common import Page
-from app.services import clip_service, video_service
+from app.schemas.editor import ClipRenameRequest
+from app.services import clip_service, editor_service, video_service
 
 video_router = APIRouter(prefix="/videos", tags=["clips"])
 clip_router = APIRouter(prefix="/clips", tags=["clips"])
@@ -133,10 +134,64 @@ def clip_stats(video_id: str, session: DbSessionDep) -> ClipStatsRead:
     )
 
 
+@clip_router.get("", response_model=Page[ClipRead])
+def list_library(
+    session: DbSessionDep,
+    video_id: str | None = None,
+    status: ClipStatus | None = None,
+    kind: str | None = None,
+    q: str | None = None,
+    sort: str = "date",
+    limit: LimitQuery = clip_service.DEFAULT_LIMIT,
+    offset: OffsetQuery = 0,
+) -> Page[ClipRead]:
+    """Cross-video clip library with filters, search and sorting."""
+    if sort not in ("date", "score"):
+        raise AppError(
+            ErrorCode.VALIDATION_ERROR,
+            "sort must be 'date' or 'score'",
+            status_code=422,
+            details={"sort": sort},
+        )
+    if kind is not None and kind not in CLIP_KINDS:
+        raise AppError(
+            ErrorCode.VALIDATION_ERROR,
+            f"kind must be one of: {', '.join(sorted(CLIP_KINDS))}",
+            status_code=422,
+            details={"kind": kind},
+        )
+    if video_id is not None:
+        video_service.get_video(session, video_id)
+    items, total = clip_service.list_library(
+        session,
+        video_id=video_id,
+        status=status.value if status is not None else None,
+        kind=kind,
+        search=q,
+        sort=sort,
+        offset=offset,
+        limit=limit,
+    )
+    return Page[ClipRead](
+        items=[clip_to_read(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @clip_router.get("/{clip_id}", response_model=ClipRead)
 def get_clip(clip_id: str, session: DbSessionDep) -> ClipRead:
     """Return one clip."""
     return clip_to_read(clip_service.get_clip(session, clip_id))
+
+
+@clip_router.patch("/{clip_id}", response_model=ClipRead)
+def rename_clip(clip_id: str, payload: ClipRenameRequest, session: DbSessionDep) -> ClipRead:
+    """Rename a clip (empty title resets to the default)."""
+    clip = editor_service.rename_clip(session, clip_id, payload.title)
+    session.commit()
+    return clip_to_read(clip)
 
 
 @clip_router.post(

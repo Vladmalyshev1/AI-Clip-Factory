@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +28,12 @@ from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode, StageCancelled
 from app.core.paths import safe_name
 from app.core.status import ClipStatus, JobStatus, parse_clip_status
+from app.media.ass import (
+    SubtitleCue,
+    SubtitleStyle,
+    build_ass_document,
+    write_ass_file,
+)
 from app.media.cut import ClipSpec, CropMode, EncodingMode, OutputFormat, render_clip
 from app.media.graph import VerticalLayout
 from app.media.probe import ProbeError
@@ -59,6 +65,8 @@ class _RenderPlan:
     duration_ms: int
     options: ClipOptions
     already_completed: bool
+    #: Subtitle snapshot of an export (``None`` = no burn-in).
+    subtitles: dict[str, Any] | None = None
 
 
 def _require_settings(ctx: StageContext) -> Settings:
@@ -107,6 +115,100 @@ def _paths(settings: Settings, video_id: str, clip_id: str) -> tuple[Path, Path]
     return directory / f".{stem}.part.mp4", directory / f"{stem}.mp4"
 
 
+#: ASS colours are ``&HAABBGGRR``; the editor stores ``#RRGGBB``.
+def _ass_colour(hex_colour: str, default: str) -> str:
+    digits = hex_colour.lstrip("#")
+    if len(digits) != 6 or any(c not in "0123456789abcdefABCDEF" for c in digits):
+        return default
+    red, green, blue = digits[0:2], digits[2:4], digits[4:6]
+    return f"&H00{blue}{green}{red}".upper()
+
+
+#: libass alignment (numpad layout) per editor position, for a 9:16 canvas.
+_POSITION_ALIGNMENT: Final[dict[str, int]] = {"top": 8, "center": 5, "bottom": 2}
+_STYLE_PRESETS: Final[dict[str, dict[str, int]]] = {
+    # Differences from the default SubtitleStyle per editor preset.
+    "classic": {"outline": 4, "shadow": 2, "bold": -1},
+    "bold": {"outline": 6, "shadow": 0, "bold": -1},
+    "gaming": {"outline": 3, "shadow": 3, "bold": -1, "margin_v": 320},
+    "minimal": {"outline": 1, "shadow": 0, "bold": 0},
+}
+
+
+def _subtitle_style_from_draft(subtitles: dict[str, Any]) -> SubtitleStyle:
+    """Map the editor's subtitle settings onto the ASS style of M5."""
+    preset = _STYLE_PRESETS.get(str(subtitles.get("style") or "classic"), {})
+    alignment = _POSITION_ALIGNMENT.get(str(subtitles.get("position") or "bottom"), 2)
+    size = subtitles.get("font_size")
+    margin_v = 220 if alignment != 5 else 0
+    if alignment == 5:  # centred: keep it off the exact middle for readability
+        margin_v = 320
+    return SubtitleStyle(
+        font_size=int(size) if isinstance(size, int) and 16 <= size <= 200 else 64,
+        primary_colour=_ass_colour(str(subtitles.get("primary_colour") or ""), "&H00FFFFFF"),
+        secondary_colour=_ass_colour(str(subtitles.get("highlight_colour") or ""), "&H000000FF"),
+        alignment=alignment,
+        margin_v=int(preset.get("margin_v", margin_v)),
+        outline=int(preset.get("outline", 4)),
+        shadow=int(preset.get("shadow", 2)),
+        bold=int(preset.get("bold", -1)),
+    )
+
+
+def _write_subtitles_file(
+    settings: Settings, video_id: str, clip_id: str, subtitles: dict[str, Any]
+) -> Path:
+    """Write the burn-in ``.ass`` file for one export from its snapshot."""
+    raw_cues = subtitles.get("cues")
+    if not isinstance(raw_cues, list) or not raw_cues:
+        raise AppError(
+            ErrorCode.SUBTITLE_FAILED,
+            "Subtitles are enabled but the export snapshot has no cues",
+            status_code=500,
+            details={"clip_id": clip_id},
+        )
+    cues: list[SubtitleCue] = []
+    for row in raw_cues:
+        if not isinstance(row, dict):
+            continue
+        text = " ".join(str(row.get("text") or "").split())
+        if not text:
+            continue
+        cues.append(
+            SubtitleCue(
+                text=text,
+                start_ms=int(row.get("start_ms") or 0),
+                end_ms=int(row.get("end_ms") or 0),
+            )
+        )
+    if not cues:  # pragma: no cover - guarded by editor validation
+        raise AppError(
+            ErrorCode.SUBTITLE_FAILED,
+            "Subtitle snapshot contains no usable cues",
+            status_code=500,
+            details={"clip_id": clip_id},
+        )
+    options = ClipOptions.from_settings(settings)
+    document = build_ass_document(
+        cues,
+        _subtitle_style_from_draft(subtitles),
+        video_width=options.width,
+        video_height=options.height,
+    )
+    path = settings.clips_dir / safe_name(video_id) / f".{safe_name(clip_id)}.part.ass"
+    write_ass_file(path, document)
+    return path
+
+
+def _plan_subtitles(clip: Any) -> dict[str, Any] | None:
+    """Return the subtitle snapshot of an export row, ``None`` when disabled."""
+    parsed = job_service.load_json_dict(clip.edit_json)
+    if not parsed:
+        return None
+    subtitles = parsed.get("subtitles")
+    return subtitles if isinstance(subtitles, dict) and subtitles.get("enabled") else None
+
+
 class RenderClipStage:
     """Render one clip row with FFmpeg and publish the validated file."""
 
@@ -119,6 +221,7 @@ class RenderClipStage:
         video_id = _require_video_id(ctx)
         clip_id = _clip_id(ctx)
         temporary: Path | None = None
+        subtitles_file: Path | None = None
 
         try:
             plan = self._prepare(factory, clip_id, video_id, job_id=ctx.job_id)
@@ -127,7 +230,8 @@ class RenderClipStage:
                 return StageResult(output={"clip_id": clip_id, "skipped": True})
 
             temporary, final_path = _paths(settings, plan.video_id, plan.clip_id)
-            spec = self._build_spec(plan, temporary)
+            subtitles_file = self._subtitles_path(settings, plan)
+            spec = self._build_spec(plan, temporary, subtitles_path=subtitles_file)
             runner = FFmpegRunner.from_settings(settings)
 
             def _on_progress(fraction: float) -> None:
@@ -225,6 +329,10 @@ class RenderClipStage:
             message = f"Clip render failed: {type(exc).__name__}: {exc}"
             self._fail(factory, clip_id, ctx.job_id, ErrorCode.CLIP_FAILED.value, message)
             raise
+        finally:
+            # The burn-in file is an intermediate artefact of this run only.
+            if subtitles_file is not None:
+                self._cleanup(subtitles_file)
 
     # ------------------------------------------------------------------ setup
 
@@ -267,6 +375,7 @@ class RenderClipStage:
             options = ClipOptions.from_dict(job_service.load_json_dict(clip.options_json) or {})
             if not already_completed:
                 clip_service.start_processing(session, clip_id, job_id=job_id)
+            subtitles = _plan_subtitles(clip)
             plan = _RenderPlan(
                 clip_id=clip.id,
                 video_id=clip.video_id,
@@ -277,17 +386,21 @@ class RenderClipStage:
                 duration_ms=clip.duration_ms,
                 options=options,
                 already_completed=already_completed,
+                subtitles=subtitles,
             )
             session.commit()
         return plan
 
-    def _build_spec(self, plan: _RenderPlan, output_path: Path) -> ClipSpec:
+    def _build_spec(
+        self, plan: _RenderPlan, output_path: Path, *, subtitles_path: Path | None = None
+    ) -> ClipSpec:
         """Build the FFmpeg spec from the persisted clip row."""
         return ClipSpec(
             source_path=plan.source_path,
             output_path=output_path,
             start_ms=plan.start_ms,
             end_ms=plan.end_ms,
+            subtitles_path=subtitles_path,
             layout=VerticalLayout(
                 width=plan.options.width, height=plan.options.height
             ),
@@ -295,6 +408,12 @@ class RenderClipStage:
             output_format=OutputFormat(plan.options.output_format),
             crop_mode=CropMode(plan.options.crop_mode),
         )
+
+    def _subtitles_path(self, settings: Settings, plan: _RenderPlan) -> Path | None:
+        """Return the burn-in ``.ass`` path when the export snapshot enables it."""
+        if plan.subtitles is None:
+            return None
+        return _write_subtitles_file(settings, plan.video_id, plan.clip_id, plan.subtitles)
 
     # -------------------------------------------------------------- bookkeeping
 

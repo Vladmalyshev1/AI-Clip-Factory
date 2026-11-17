@@ -226,6 +226,18 @@ HIGHLIGHT_TRANSITIONS: Final[dict[HighlightStatus, frozenset[HighlightStatus]]] 
     HighlightStatus.COMPLETED: frozenset({HighlightStatus.PENDING}),
 }
 
+class ClipKind(StrEnum):
+    """Provenance of one clip row."""
+
+    #: A clip generated from an M4 candidate.
+    AUTO = "auto"
+    #: A re-render cut from an existing clip (the editor's export).
+    EXPORT = "export"
+
+
+CLIP_KINDS: Final[frozenset[str]] = frozenset(kind.value for kind in ClipKind)
+
+
 class ClipStatus(StrEnum):
     """Lifecycle states of one generated clip."""
 
